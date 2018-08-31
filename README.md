@@ -2,7 +2,7 @@
 
 Vilka nyhetskällor har varit mest framträdande på Twitter inför valet? Det är den övergripande frågeställningen för den här analysen av svensk politik på Twitter, [#svpol](https://twitter.com/search?q=%23svpol&src=tyah), inför riksdagsvalet 2018.
 
-Här hittar du all källkod till min analys i rapporten [Snabbtänkt](https://www.snabbtankt.se/), samt ytterligare analyser av #svpol.
+Här hittar du all källkod till min analys i rapporten [Snabbtänkt](https://www.snabbtankt.se/), samt [ytterligare analyser av #svpol](https://peterdalle.github.io/notebooks/snabbtankt-valet2018.html).
 
 Några frågeställningar (och tillvägagångssätt) i analysen:
 
@@ -13,9 +13,9 @@ Några frågeställningar (och tillvägagångssätt) i analysen:
 
 ## Källkod
 
-- Filen [`R/analysis.rmd`](R/analysis.rmd) innehåller hela den explorativa analysen.
-- Filen [`R/create_graph.r`](R/create_graph.r) åsterskapar bilderna i PNG- och PDF-format.
-- Filen (`doc/snabbtankt-text.rmd`)(snabbtankt-text.rmd) innehåller rapporttexten och skapar en Word-fil.
+- Filen [`R/analysis.rmd`](R/analysis.rmd) innehåller hela den explorativa analysen (finns som HTML-fil på <https://peterdalle.github.io/notebooks/snabbtankt-valet2018.html>).
+- Filen [`R/create_graph.r`](R/create_graphs.r) åsterskapar bilderna i PNG- och PDF-format.
+- Filen [`doc/snabbtankt-text.rmd`](doc/snabbtankt-text.rmd) innehåller rapporttexten och skapar en Word-fil.
 
 ## Data, urval och metod
 
@@ -32,12 +32,3 @@ Verktyget [DMI-TCAT](https://wiki.digitalmethods.net/Dmi/ToolDmiTcat) har använ
 > reflektioner från den svenska valrörelsen 2018 av ledande forskare där närmare hundra forskare analyserar och reflekterar över årets val och valrörelse. Här kommer du alltså att kunna hitta de bästa analyserna och reflektionerna samlade i en gratis nedladdningsbar rapport 10 dagar efter valet samt i podden Snabbtänkt.
 
 ![Snabbtänkt logo.](snabbtankt-logo.jpg)
-
-## Inspiration
-
-Här kommer kredd till de som inspirerat dessa analyser.
-
-- [David Robinson](http://varianceexplained.org/r/hn-trends/)
-- [Julia Silge](https://github.com/juliasilge/women-in-film)
-- [Kate Starbird](https://medium.com/hci-design-at-uw/information-wars-a-window-into-the-alternative-media-ecosystem-a1347f32fd8f)
-- [Sara Locatelli](http://www.deeplytrivial.com/2018/08/statistics-sunday-getting-started-with.html)
