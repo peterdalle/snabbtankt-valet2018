@@ -1,0 +1,584 @@
+---
+title: 'Analys av domäner på #svpol - Snabbtänkt valet 2018'
+author: "Peter M. Dahlgren"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+abstract: "Explorativ analys av tweets och domännätverket på #svpol under juni till augusti 2018, med jämförelse med samma period för 2017. Alla analyser avser 2018 om inget annat anges."
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+theme_set(theme_minimal())
+set.seed(1234)
+```
+
+# Analays av tweets
+
+## Ladda data
+
+```{r load-tweets, include=FALSE, echo=FALSE, comment="Read tweets from a MysQL database to a data frame"}
+library(RMySQL)
+
+# Load tweets.
+drv <- dbDriver("MySQL")
+conn <- dbConnect(drv, host="localhost", user="root", pass="root", dbname="twittercapture", encoding="UTF-8")
+dbSendQuery(conn, "SET CHARACTER SET 'utf8'")
+
+df <- dbGetQuery(conn, "SELECT * FROM pol_tweets WHERE DATE(created_at) BETWEEN '2018-06-01' AND '2018-08-31'")
+df_2017 <- dbGetQuery(conn, "SELECT * FROM pol_tweets WHERE DATE(created_at) BETWEEN '2017-06-01' AND '2017-08-31'")
+
+# Silently disconnect.
+tmp <- dbDisconnect(conn)
+
+# Set encoding.
+Encoding(df$text) <- "UTF-8"
+#df$text <- stringi::stri_enc_toutf8(df$text)
+```
+
+```{r prepare-tweets, comment="Prepare tweets for analysis"}
+library(lubridate)
+library(tidytext)
+
+# Round dates.
+df <- df %>%
+  mutate(time  = as.POSIXct(created_at, origin = "1970-01-01"),
+         year  = round_date(time, "year"),
+         month = round_date(time, "month"),
+         week  = round_date(time, "week"),
+         day   = round_date(time, "day"))
+
+# Tokenize tweets.
+df_token <- df %>% 
+  unnest_tokens(word, text, token="tweets")
+
+# Get Swedish stopwords.
+stopwords_swe <- read.csv2("https://raw.githubusercontent.com/peterdalle/svensktext/master/stoppord/stoppord-politik.csv", header=FALSE, stringsAsFactors=FALSE, encoding="UTF-8")
+
+# Todo: lägg in i csv-filen senare.
+stopwords_custom <- read.table(header=FALSE, text="alla
+bra
+ingen
+the
+via
+år
+ju
+ingen
+se
+allt
+to
+nya
+borde
+läs
+tror
+just
+nytt
+dag
+dagens
+sluta 
+behöver
+fel
+inget
+bör
+åt
+ny
+bättre
+senaste
+andra
+aldrig
+tack
+bort
+dags
+samtidigt
+fortsätter
+lika
+åker
+enda
+hej
+hos
+visar
+egen
+ställas
+anser
+va
+själv
+tycker")
+stopwords_custom <- as.character(stopwords_custom$V1)
+
+# Combine with custom stop words for the #svpol data set.
+stopwords <- data.frame(word = c(stopwords_swe$V1, 
+                               letters, LETTERS,
+                               "http", "https", "t.co", "rt", "#svpol", "amp", 
+                               stopwords_custom), stringsAsFactors = FALSE)
+```
+
+## Deskriptiv statistik
+
+```{r descriptive-statistics}
+num_tweets <- as.integer(df %>% count())
+num_unique_users <- as.integer(df %>% select(from_user_name) %>% distinct %>% count())
+num_tokens <- NROW(df_token)
+
+first_datetime <- as.POSIXct(min(df$created_at))
+last_datetime <- as.POSIXct(max(df$created_at))
+num_days <- as.integer(last_datetime - first_datetime)
+```
+
+- `r num_unique_users` unika användare har gjort `r num_tweets` inlägg
+- från `r first_datetime` till `r last_datetime` (totalt `r num_days` dagar)
+- i genomsnit `r round(num_tweets / num_days)` inlägg per dag
+- i genomsnitt `r round(num_tweets / num_unique_users)` inlägg per användare 
+- från inläggen har `r num_tokens` ord plockats ut och analyserats
+- antal tweets 2017: `r NROW(df_2017)`
+- antal tweets 2018: `r NROW(df)`
+- totalt antal tweets 2017 + 2018: `r NROW(df) + NROW(df_2017)`
+
+## Inlägg per dag
+
+```{r tweets-per-day, fig.width=10}
+# Histogram with tweets per day.
+df %>%
+  group_by(day = as.Date(day)) %>%
+  count(day) %>%
+  ggplot(aes(day, n)) +
+    geom_col() +
+    #geom_smooth(method="lm") +
+    scale_x_date(date_breaks = "1 weeks") +
+    labs(title="Tweets per dag", x="Dag", y="Antal tweets") +
+    theme(axis.text.x = element_text(angle=45))
+```
+
+## Toppanvändare
+
+```{r links-topusers, fig.width=7, fig.height=8}
+# Plot top users.
+df_topusers <- df %>% group_by(from_user_name) %>% count(from_user_name, sort=TRUE) 
+df_topusers$from_user_name <- factor(df_topusers$from_user_name, levels=rev(df_topusers$from_user_name)) # Set factors to avoid ggplot ordering + reverse order.
+
+df_topusers %>%
+  head(50) %>%
+  ggplot(aes(from_user_name, n)) +
+  geom_col() +
+  labs(title="Användare som postat flest länkar i #svpol", x=NULL) +
+  coord_flip()
+```
+
+## Vanligaste orden
+
+```{r ordw-frequency}
+# Count token frequency, sort descending.
+df_token_frequency <- df_token %>%
+  anti_join(stopwords, by="word") %>% 
+  count(word, sort = TRUE) 
+```
+
+```{r word-frequency-plot, fig.width=6, fig.height=7}
+# Plot word counts.
+df_token_frequency %>%
+  head(25) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+    geom_col() +
+    labs(title="Vanligaste orden i #svpol", 
+         caption='Med vanliga ord bortplockade',
+         y = "Antal ord",
+         x=NULL) +
+    coord_flip() 
+```
+
+### Ordmoln
+
+```{r wordcloud, fig.width=9, fig.height=9, comment="Create a word cloud with the most common words in the tweets"}
+library(wordcloud)
+set.seed(673)
+wordcloud(df_token_frequency$word, df_token_frequency$n, max.words=200, scale=c(5, 1.1), colors=brewer.pal(8, "Dark2"))
+```
+
+## Bigram Markov Chain
+
+```{r bigrams-prepare-sort}
+library(tidyverse)
+library(tidytext)
+library(stringr)
+
+# Get bigrams from tweets.
+bigrams <- df %>% 
+  unnest_tokens(bigram, text, token = "ngrams", n = 2, collapse = FALSE) 
+    
+# Separate bigrams into two columns.
+bigrams_separated <- bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+# Sort bigrams.
+bigrams_sorted <- bigrams %>% 
+  count(bigram, sort=TRUE)
+
+bigrams_sorted %>% head(50)
+```
+
+```{r bigram-remove-stopwords}
+# Remove stopwords.
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stopwords$word) %>%
+  filter(!word2 %in% stopwords$word)
+
+# Bigram frequencies.
+bigram_counts <- bigrams_filtered %>% 
+  count(word1, word2, sort = TRUE)
+```
+
+```{r bigram-graph-network, fig.width=8, fig.height=8}
+# Create Markov Chain of bigrams.
+library(igraph)
+library(ggraph)
+set.seed(1234)
+
+bigram_graph <- bigram_counts %>%
+  filter(n > 400) %>%
+  graph_from_data_frame()
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) + 
+  theme_void()
+```
+
+```{r bigram-graph-arrow, fig.width=12, fig.height=10}
+arw <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE, arrow = arw, end_cap = circle(2, 'mm')) +
+  geom_node_point(color = "#55acee", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1, repel=FALSE) +
+  theme_void()
+```
+
+## Sentiment
+
+```{r sentiment}
+# Sentiment analysis with swedish + english.
+sent_swe <- read.csv("https://raw.githubusercontent.com/peterdalle/svensktext/master/sentiment/sentimentlex.csv", header = TRUE, encoding = "UTF-8")
+sent_swe <- sent_swe %>% rename(word = X.U.FEFF.word) 
+sent_swe$sentiment[sent_swe$polarity == "pos"] <- "positive"
+sent_swe$sentiment[sent_swe$polarity == "neg"] <- "negative"
+
+# Group words by day.
+df_day <- df %>%
+  group_by(day=as.Date(created_at, "%Y-%m-%d")) %>%
+  mutate(tweet = row_number()) %>%
+  ungroup() %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stopwords, by="word")
+
+# Randomly remove positive Swedish sentiment to balance positive/negative sentiments.
+set.seed(1234)
+num_negative_sentiments <- unlist(ceiling(sent_swe %>% filter(sentiment == "negative") %>% count()))
+sent_swe_balanced <-
+  rbind(sent_swe %>% filter(sentiment == "negative"),
+        sent_swe %>% filter(sentiment == "positive") %>% sample_n(num_negative_sentiments))
+
+# English + Swedish sentiment.
+#sent_all <- rbind(get_sentiments("bing"), sent_swe_balanced %>% select(word, sentiment)) 
+
+# Swedish sentiment only.
+sent_all <- sent_swe_balanced
+
+# Only positive and negative sentiment.
+sent_all <- sent_all %>% filter(sentiment %in% c("negative", "positive"))
+
+# Create sentiment by day.
+sent <- df_day %>%
+  inner_join(sent_all) %>%
+  count(day, sentiment) %>%
+  group_by(sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+# Set direction of polarity.
+sent$polarity <- ifelse(sent$sentiment > 0, 1, -1)
+
+# Plot sentiment.
+sent %>% 
+  ggplot(aes(day, sentiment, fill=factor(polarity))) +
+    geom_col(show.legend = FALSE) +
+  scale_fill_manual(values=c("#0991db", "#f26b68")) +
+    labs(title = "Tonen på orden över tid",
+         x = "Dag",
+         y = "Positiv - minus ord") 
+```
+
+## Länder och nationaliteter
+
+Hur ofta olika nationaliteter omnämns.
+
+```{r tweets-nationals-load}
+# Read name of nationals.
+nationals <- read.csv("https://raw.githubusercontent.com/peterdalle/svensktext/master/nationaliteter/nationaliteter.csv", 
+                          header=TRUE, stringsAsFactors=FALSE, encoding="UTF-8")
+
+# Split JSON lists, e.g. ["one", "two", "three"], into a vector.
+nationals_vector <- nationals$resident_singular %>% 
+  str_remove_all("'") %>% 
+  str_remove_all("]") %>% 
+  str_remove_all('\\[') %>% 
+  str_split(",") %>% 
+  unlist() %>% 
+  trimws()
+
+nationals_swe <- data.frame(word = nationals_vector, stringsAsFactors = FALSE)
+```
+
+```{r tweets-nationals}
+# Nationalities frequencies.
+df_nationals_frequency <- df_token %>%
+  inner_join(nationals_swe, by="word") %>%
+  count(word, word, sort = TRUE)
+
+# Show most used nationalities. Note: Only singular terms, not plural.
+# Todo: Lägg till stemmer för plural till singular.
+df_nationals_frequency %>% head()
+```
+
+# Analys av domäner
+
+## Ladda data
+
+```{r links-topdomains}
+# Connect to MySQL.
+library(RMySQL)
+drv <- dbDriver("MySQL")
+conn <- dbConnect(drv, host="localhost", user="root", pass="root", dbname="twittercapture")
+
+# 2018.
+df_domains <- dbGetQuery(conn, "SELECT from_user_id, from_user_name, domain, created_at FROM pol_urls WHERE domain != '' AND DATE(created_at) BETWEEN '2018-06-01' AND '2018-08-31';")
+
+# 2017.
+df_domains_2017 <- dbGetQuery(conn, "SELECT from_user_id, from_user_name, domain, created_at FROM pol_urls WHERE domain != '' AND DATE(created_at) BETWEEN '2017-06-01' AND '2017-08-31';")
+
+# Silently disconnect.
+tmp <- dbDisconnect(conn)
+```
+
+```{r setup-functions}
+# Function to remove subdomain to get root domain (m.gp.se --> gp.se), but add option
+# to exclude blog networks (e.g., xxx.wordpress.com or xxx.blogspot.se).
+remove_subdomain <- function(domain, exclude=NULL) {
+  parts <- str_split(domain, "\\.", simplify = TRUE)
+  if(length(parts) > 1) {
+    dom <- parts[[length(parts) - 1]]
+    tld <- parts[[length(parts)]]
+    if(dom == "co" & tld == "uk") {
+      if(length(parts) > 2) {
+        # Special case for co.uk TLDs.
+        return(paste0(parts[[length(parts) - 2]], ".", dom, ".", tld))
+      } else {
+        # Return as-is.
+        return(domain)
+      }
+    } else {
+      domain_concatenated <- paste0(dom, ".", tld)
+      if(is.element(domain_concatenated, exclude)) {
+        # If the domain should be excluded, return original.
+        return(domain)
+      }
+      return(domain_concatenated)
+    } 
+  } else {
+    return(domain)
+  }
+}
+```
+
+## Deskriptiv statistik
+
+- antal domäner 2017: `r NROW(df_domains_2017)`
+- antal domäner 2018: `r NROW(df_domains)`
+- antal domäner 2017 + 2018: `r NROW(df_domains_2017) + NROW(df_domains)`
+
+## Toppdomäner
+
+```{r top-domains}
+# Stem to root domain for all domains except blog networks.
+df_domains$domain_root <- sapply(df_domains$domain, remove_subdomain, exclude=c("wordpress.com", "blogspot.com", "blogspot.se"), simplify = TRUE)
+
+# Get top domains.
+df_domains_count <- df_domains %>% 
+  group_by(domain_root) %>% 
+  count(domain_root, sort=TRUE) 
+```
+
+```{r load-newsmedia-domains}
+# Get list of news media domains.
+df_newsmedia <- read.csv("https://raw.githubusercontent.com/peterdalle/svensktext/master/medier/nyheter-domaner.csv", header = FALSE, encoding="UTF-8", stringsAsFactors = FALSE, strip.white = TRUE)
+
+# Rename field.
+df_newsmedia <- df_newsmedia %>% 
+  transmute(domain = V1,
+            type = "news")
+
+# Display news domains.
+df_newsmedia %>% head()
+```
+
+```{r links-topdomains-plot, fig.width=5, fig.height=2.5}
+# Set factors to avoid ggplot ordering + reverse order.
+df_domains_count$domain_root <- factor(df_domains_count$domain_root, levels=rev(df_domains_count$domain_root)) 
+
+# Plot top domains.
+df_domains_count %>%
+  filter(!domain_root %in% c("twitter.com")) %>% # Remove Twitter.
+  head(7) %>%
+  ggplot(aes(domain_root, n)) +
+  geom_col(fill="#55acee") +
+  labs(title="Mest delade hemsidorna på #svpol", x=NULL,
+       y="Antal länkar") +
+  coord_flip() +
+  theme(panel.grid.major.y = element_blank())
+```
+
+## Nätverksgraf
+
+Hur många gånger två domäner förekommer tillsammans bland en och samma användare (co-occurrences). Ju grövre tjocklek på linjen, desto fler gånger har domänerna förekommit tillsammans. Samma metod som i [Information Wars: A Window into the Alternative Media Ecosystem](https://medium.com/hci-design-at-uw/information-wars-a-window-into-the-alternative-media-ecosystem-a1347f32fd8f)).
+
+Notera: Domänerna behöver inte ha förekommit i samma tweet av användaren, utan kan ha förekommit i två oberoende tweets från samma användare.
+
+
+```{r links-domainnetwork}
+library(widyr)
+library(igraph)
+
+# Filter out news domains.
+df <- df_domains %>%
+  filter(!domain_root %in% c("twitter.com", "twitlonger.com")) %>%
+  pairwise_count(domain_root, from_user_name, sort=TRUE)
+
+# Create graph.
+graph <- df %>%
+  filter(n >= 100) %>%
+  #mutate(news = factor(news)) %>% 
+  graph_from_data_frame()
+
+# Categorize domains.
+names <- vertex_attr(graph)$name
+V(graph)$type <- case_when(
+  names %in% c(df_newsmedia$domain, "dailymail.co.uk") ~ "Nyhetssajter",
+  names %in% c("youtube.com", "facebook.com", "dropbox.com") ~ "Sociala medier",
+  names %in% c("friatider.se", "samtiden.nu", "samnytt.se", "nyheteridag.se", "mickek69.com", "svegot.se", "toklandet.wordpress.com", "katerinamagasin.se", "nyatider.nu", "alternativforsverige.se", "israelnationalnews.com") ~ "Immigration",
+  TRUE ~ "FEL: DENNA BÖR INTE SYNAS")
+
+# Calculate indegree.
+V(graph)$indegree <- degree(graph, mode="in")
+```
+
+```{r links-domainnetwork-plot, fig.width=13, fig.height=9}
+library(ggraph)
+set.seed(791)
+
+# Plot graph.
+graph %>%
+  ggraph(layout="drl") + #drl
+  geom_edge_link(aes(edge_alpha=n, edge_width=n), edge_colour="gray", show.legend=FALSE) +
+  scale_size(range = c(2, 10)) +
+  #geom_edge_density(aes(fill=sqrt(n))) +
+  geom_node_point(aes(size=indegree, color=factor(type))) +
+  #scale_color_manual(values = c("#DF484A", "#FDBF81", "#BCE4B7"))+
+  scale_color_brewer(palette = "Set1") +
+  geom_node_text(aes(label=name), vjust=2.2, size=4, repel=FALSE, check_overlap=TRUE) +
+  labs(color="") +
+  guides(size=FALSE, color = guide_legend(override.aes = list(size=5))) +
+  theme_graph(plot_margin = margin(10, 10, 10, 10)) + 
+  theme(legend.position ="bottom",
+        legend.text = element_text(size = 10, color = "black", family="sans"),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "black"))
+```
+
+```{r links-max-indegree}
+# Domain with most inlinks.
+V(graph)$name[degree(graph) == max(degree(graph))]
+```
+
+## Skillnad jämfört med 2017
+
+### Absolut förändring
+
+```{r diff-count}
+# Remove subdomains, except for blog networks.
+df_domains_2017$domain_root <- sapply(df_domains_2017$domain, remove_subdomain, exclude=c("wordpress.com", "blogspot.com", "blogspot.se"), simplify = TRUE)
+
+# Count occurances of domain name.
+df_domains_2017_count <- df_domains_2017 %>% 
+  group_by(domain_root) %>% 
+  count(domain_root, sort=TRUE) 
+
+# Compare difference in number of links between old and new twitter data.
+df_domains_diff <- df_domains_2017_count %>% 
+  left_join(df_domains_count, by="domain_root", suffix=c("_2017", "_2018")) %>% 
+  mutate(diff = n_2018 - n_2017) %>% 
+  arrange(desc(abs(diff)))
+
+# Set direction of difference: positive (1) or negative (-1).
+df_domains_diff$diff_direction <- ifelse(df_domains_diff$diff > 0, 1, -1)
+```
+
+```{r difference-absolute-plot}
+# Plot absolute difference.
+df_domains_diff %>% 
+  head(15) %>% 
+  filter(!domain_root %in% c("twitter.com")) %>% 
+  ggplot(aes(reorder(domain_root, diff), diff, fill=factor(diff_direction))) +
+  geom_col() +
+  scale_fill_manual(values = c("firebrick1", "steelblue")) +
+  labs(title = "Förändring bland länkade sajter från 2017 till 2018",
+       subtitle = "Absolut antal länkar",
+       x = NULL,
+       y = "Förändring i antal länkar",
+       fill = NULL) +
+  theme(legend.position = "none", panel.grid.major.y = element_blank()) +
+  coord_flip()
+```
+
+### Relativ förändring
+
+Eftersom antal inlägg skiljer sig från ett år till ett annat är det mer lämpligt att använda ett relativt mått på förändringen. Det vill säga, hur stor andel av länkarna som består av exempelvis expressen.se under år 2017, jämfört med hur stor andel som består av expressen.se år 2018. Då ser man om andelen har ökat inom respektive år.
+
+Med andra ord, står det 10 procentenheter i grafen innebär det att andelen av länkarna har ökat med 10 procentenheter (inte att ökningen är 10 procent) från ett år till ett annat.
+
+```{r difference-relative}
+# Get total number of domains for each year.
+df_domains_diff <- df_domains_diff %>%
+  mutate(n_2017_total = sum(df_domains_2017_count$n)) %>% 
+  mutate(n_2018_total = sum(df_domains_count$n))
+
+# Relative difference by the total number of domains each year.
+df_domains_diff <- df_domains_diff %>%
+  mutate(percent_2017 = n_2017 / n_2017_total,
+         percent_2018 = n_2018 / n_2018_total) %>% 
+  mutate(relative_diff = percent_2018 - percent_2017)
+
+# Set direction for relative differences.
+df_domains_diff$relative_diff_direction <- ifelse(df_domains_diff$relative_diff > 0, 1, -1)
+```
+
+```{r difference-relative-plot}
+# Plot relative difference.
+df_domains_diff %>% 
+  head(15) %>% 
+  filter(!domain_root %in% c("twitter.com")) %>%
+  ggplot(aes(reorder(domain_root, relative_diff), relative_diff*100, fill=factor(relative_diff_direction))) +
+  geom_col() +
+  scale_fill_manual(values = c("firebrick1", "steelblue")) +
+  scale_y_continuous(breaks=seq(-100, 100, 2)) +
+  labs(title = "Förändring bland länkade sajter från 2017 till 2018",
+       subtitle = "Relativt antal länkar",
+       x = NULL,
+       y = "Förändring av andel länkar (procentenheter)",
+       fill = NULL) +
+  theme(legend.position = "none", panel.grid.major.y = element_blank()) +
+  coord_flip()
+```
